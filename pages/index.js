@@ -8,7 +8,6 @@ export default function Home() {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
     });
-    supabase.auth.onAuthStateChange((_e, s) => setSession(s));
   }, []);
 
   if (!session) {
@@ -18,7 +17,7 @@ export default function Home() {
     return (
       <div style={styles.login}>
         <div style={styles.loginBox}>
-          <h2>Gestão Serviços PRO</h2>
+          <h2>Gestão PRO</h2>
           <input placeholder="Email" onChange={e => (email = e.target.value)} />
           <input type="password" placeholder="Password" onChange={e => (password = e.target.value)} />
           <button onClick={() => supabase.auth.signInWithPassword({ email, password })}>
@@ -34,9 +33,20 @@ export default function Home() {
 
 function Dashboard() {
   const [services, setServices] = useState([]);
+  const [team, setTeam] = useState([]);
+
+  const [form, setForm] = useState({
+    name: "",
+    progress: 0,
+    sla: ""
+  });
+
+  const [editing, setEditing] = useState(null);
+  const [timelineInput, setTimelineInput] = useState("");
 
   useEffect(() => {
     load();
+    loadTeam();
   }, []);
 
   async function load() {
@@ -44,81 +54,165 @@ function Dashboard() {
     setServices(data || []);
   }
 
-  function risk(progress) {
-    if (progress < 30) return "Alto";
-    if (progress < 70) return "Médio";
-    return "Baixo";
+  async function loadTeam() {
+    const { data } = await supabase.from("team_members").select("*");
+    setTeam(data || []);
   }
 
-  function color(progress) {
-    if (progress < 30) return "#ef4444";
-    if (progress < 70) return "#f97316";
-    return "#22c55e";
+  async function createProject() {
+    await supabase.from("services").insert({
+      ...form,
+      timeline: []
+    });
+
+    setForm({ name: "", progress: 0, sla: "" });
+    load();
+  }
+
+  async function updateProject(id, updates) {
+    await supabase.from("services").update(updates).eq("id", id);
+    load();
+  }
+
+  function addTimeline(service) {
+    const updated = [...(service.timeline || []), timelineInput];
+    updateProject(service.id, { timeline: updated });
+    setTimelineInput("");
+  }
+
+  async function addMember(email) {
+    await supabase.from("team_members").insert({ email });
+    loadTeam();
+  }
+
+  function risk(p) {
+    if (p < 30) return "🔴 Alto";
+    if (p < 70) return "🟠 Médio";
+    return "🟢 Baixo";
   }
 
   return (
     <div style={styles.app}>
-
+      
       {/* SIDEBAR */}
       <div style={styles.sidebar}>
         <h2>Gestão PRO</h2>
-        <div style={styles.menuActive}>Dashboard</div>
-        <div style={styles.menu}>Meus Serviços</div>
-        <div style={styles.menu}>Equipa</div>
+        <div style={styles.active}>Dashboard</div>
+        <div>Projetos</div>
+        <div>Equipa</div>
       </div>
 
       {/* MAIN */}
       <div style={styles.main}>
+
         <h1>Dashboard</h1>
 
-        {/* KPIs */}
+        {/* KPI */}
         <div style={styles.kpis}>
           <div style={styles.kpiBlue}>
-            Total de Serviços<br />{services.length}
+            {services.length}<br />Total
           </div>
-
           <div style={styles.kpiOrange}>
-            Serviços em Risco<br />
-            {services.filter(s => s.progress < 40).length}
+            {services.filter(s => s.progress < 40).length}<br />Risco
           </div>
-
           <div style={styles.kpiGreen}>
-            Concluídos<br />
-            {services.filter(s => s.progress >= 90).length}
+            {services.filter(s => s.progress > 80).length}<br />Concluído
           </div>
         </div>
 
-        {/* CARDS */}
+        {/* CREATE */}
+        <div style={styles.create}>
+          <input
+            placeholder="Projeto"
+            value={form.name}
+            onChange={e => setForm({ ...form, name: e.target.value })}
+          />
+          <input
+            type="number"
+            placeholder="Progresso"
+            value={form.progress}
+            onChange={e => setForm({ ...form, progress: e.target.value })}
+          />
+          <input
+            placeholder="SLA"
+            value={form.sla}
+            onChange={e => setForm({ ...form, sla: e.target.value })}
+          />
+          <button onClick={createProject}>Criar</button>
+        </div>
+
+        {/* PROJECT GRID */}
         <div style={styles.grid}>
           {services.map(s => (
             <div key={s.id} style={styles.card}>
 
-              <h3>{s.name}</h3>
+              {editing === s.id ? (
+                <>
+                  <input
+                    value={s.name}
+                    onChange={e => updateProject(s.id, { name: e.target.value })}
+                  />
+                  <input
+                    type="number"
+                    value={s.progress}
+                    onChange={e => updateProject(s.id, { progress: e.target.value })}
+                  />
+                  <input
+                    value={s.sla || ""}
+                    onChange={e => updateProject(s.id, { sla: e.target.value })}
+                  />
+                  <button onClick={() => setEditing(null)}>Guardar</button>
+                </>
+              ) : (
+                <>
+                  <h3>{s.name}</h3>
+                  <p>{risk(s.progress)}</p>
+                  <p>Progresso: {s.progress}%</p>
+                  <p>SLA: {s.sla}</p>
+                  <button onClick={() => setEditing(s.id)}>Editar</button>
+                </>
+              )}
 
-              <div style={styles.progressBar}>
+              {/* PROGRESS */}
+              <div style={styles.progress}>
                 <div style={{
                   width: `${s.progress}%`,
-                  background: color(s.progress),
+                  background: "#22c55e",
                   height: "100%"
                 }} />
               </div>
 
-              <p><b>Progresso:</b> {s.progress}%</p>
-              <p><b>Risco:</b> {risk(s.progress)}</p>
-              <p><b>Prazo:</b> {s.end_date || "—"}</p>
-
               {/* TIMELINE */}
               <div>
-                <b>Timeline:</b>
+                <b>Timeline</b>
+                <input
+                  placeholder="Novo evento"
+                  value={timelineInput}
+                  onChange={e => setTimelineInput(e.target.value)}
+                />
+                <button onClick={() => addTimeline(s)}>+</button>
+
                 {(s.timeline || []).map((t, i) => (
-                  <div key={i} style={{ fontSize: 12 }}>
-                    • {t}
-                  </div>
+                  <div key={i}>• {t}</div>
                 ))}
               </div>
 
-              <button style={styles.btn}>Editar</button>
             </div>
+          ))}
+        </div>
+
+        {/* TEAM */}
+        <div style={styles.team}>
+          <h2>Equipa</h2>
+          <input
+            placeholder="Adicionar membro (Enter)"
+            onKeyDown={e => {
+              if (e.key === "Enter") addMember(e.target.value);
+            }}
+          />
+
+          {team.map(m => (
+            <div key={m.id}>👤 {m.email}</div>
           ))}
         </div>
 
@@ -137,8 +231,7 @@ const styles = {
     padding: 20
   },
 
-  menu: { padding: 10, opacity: 0.8 },
-  menuActive: { padding: 10, background: "#2563eb", borderRadius: 8 },
+  active: { background: "#2563eb", padding: 10, borderRadius: 8 },
 
   main: { flex: 1, padding: 30, background: "#f1f5f9" },
 
@@ -147,6 +240,8 @@ const styles = {
   kpiBlue: { flex: 1, background: "#2563eb", color: "white", padding: 20, borderRadius: 10 },
   kpiOrange: { flex: 1, background: "#f97316", color: "white", padding: 20, borderRadius: 10 },
   kpiGreen: { flex: 1, background: "#22c55e", color: "white", padding: 20, borderRadius: 10 },
+
+  create: { display: "flex", gap: 10, marginBottom: 20 },
 
   grid: {
     display: "grid",
@@ -161,27 +256,24 @@ const styles = {
     boxShadow: "0 4px 10px rgba(0,0,0,0.1)"
   },
 
-  progressBar: {
-    height: 8,
+  progress: {
+    height: 6,
     background: "#ddd",
-    borderRadius: 5,
-    marginBottom: 10
+    margin: "10px 0"
   },
 
-  btn: {
-    marginTop: 10,
-    padding: 8,
-    background: "#2563eb",
-    color: "white",
-    border: "none",
-    borderRadius: 6
+  team: {
+    marginTop: 30,
+    background: "white",
+    padding: 20,
+    borderRadius: 10
   },
 
   login: {
     display: "flex",
+    height: "100vh",
     justifyContent: "center",
-    alignItems: "center",
-    height: "100vh"
+    alignItems: "center"
   },
 
   loginBox: {
