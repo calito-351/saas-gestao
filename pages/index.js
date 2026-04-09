@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
+import { DragDropContext, Droppable, Draggable } from "react-beautiful-dnd";
 
 export default function Home() {
   const [session, setSession] = useState(null);
@@ -15,11 +16,11 @@ export default function Home() {
     let password = "";
 
     return (
-      <div style={styles.login}>
-        <div style={styles.loginBox}>
-          <h2>Gestão PRO</h2>
+      <div style={styles.center}>
+        <div style={styles.box}>
+          <h2>SaaS PRO</h2>
           <input placeholder="Email" onChange={e => (email = e.target.value)} />
-          <input type="password" placeholder="Password" onChange={e => (password = e.target.value)} />
+          <input type="password" onChange={e => (password = e.target.value)} />
           <button onClick={() => supabase.auth.signInWithPassword({ email, password })}>
             Entrar
           </button>
@@ -28,193 +29,186 @@ export default function Home() {
     );
   }
 
-  return <Dashboard />;
+  return <Dashboard session={session} />;
 }
 
-function Dashboard() {
+function Dashboard({ session }) {
+  const [orgId, setOrgId] = useState(null);
   const [services, setServices] = useState([]);
   const [team, setTeam] = useState([]);
-
-  const [form, setForm] = useState({
-    name: "",
-    progress: 0,
-    sla: ""
-  });
-
-  const [editing, setEditing] = useState(null);
+  const [name, setName] = useState("");
   const [timelineInput, setTimelineInput] = useState("");
 
   useEffect(() => {
-    load();
-    loadTeam();
+    setup();
   }, []);
 
+  async function setup() {
+    const { data } = await supabase
+      .from("memberships")
+      .select("*")
+      .eq("user_id", session.user.id);
+
+    if (!data.length) {
+      const { data: org } = await supabase
+        .from("organizations")
+        .insert({ name: "Empresa" })
+        .select()
+        .single();
+
+      await supabase.from("memberships").insert({
+        user_id: session.user.id,
+        org_id: org.id,
+        role: "admin"
+      });
+
+      setOrgId(org.id);
+    } else {
+      setOrgId(data[0].org_id);
+    }
+  }
+
+  useEffect(() => {
+    if (orgId) {
+      load();
+      loadTeam();
+    }
+  }, [orgId]);
+
   async function load() {
-    const { data } = await supabase.from("services").select("*");
+    const { data } = await supabase
+      .from("services")
+      .select("*")
+      .eq("org_id", orgId);
+
     setServices(data || []);
   }
 
   async function loadTeam() {
-    const { data } = await supabase.from("team_members").select("*");
+    const { data } = await supabase
+      .from("team_members")
+      .select("*")
+      .eq("org_id", orgId);
+
     setTeam(data || []);
   }
 
   async function createProject() {
     await supabase.from("services").insert({
-      ...form,
+      name,
+      org_id: orgId,
+      status: "todo",
+      progress: 20,
       timeline: []
     });
 
-    setForm({ name: "", progress: 0, sla: "" });
+    setName("");
     load();
   }
 
-  async function updateProject(id, updates) {
-    await supabase.from("services").update(updates).eq("id", id);
+  async function updateStatus(id, status) {
+    await supabase.from("services").update({ status }).eq("id", id);
     load();
+  }
+
+  function onDragEnd(result) {
+    if (!result.destination) return;
+    updateStatus(result.draggableId, result.destination.droppableId);
   }
 
   function addTimeline(service) {
     const updated = [...(service.timeline || []), timelineInput];
-    updateProject(service.id, { timeline: updated });
+    supabase.from("services").update({ timeline: updated }).eq("id", service.id);
     setTimelineInput("");
+    load();
   }
 
   async function addMember(email) {
-    await supabase.from("team_members").insert({ email });
+    await supabase.from("team_members").insert({
+      email,
+      org_id: orgId
+    });
     loadTeam();
   }
 
-  function risk(p) {
-    if (p < 30) return "🔴 Alto";
-    if (p < 70) return "🟠 Médio";
-    return "🟢 Baixo";
-  }
+  const columns = {
+    todo: services.filter(s => s.status === "todo"),
+    doing: services.filter(s => s.status === "doing"),
+    done: services.filter(s => s.status === "done")
+  };
 
   return (
     <div style={styles.app}>
-      
-      {/* SIDEBAR */}
+
       <div style={styles.sidebar}>
-        <h2>Gestão PRO</h2>
-        <div style={styles.active}>Dashboard</div>
-        <div>Projetos</div>
-        <div>Equipa</div>
+        <h2>Gestão</h2>
+        <div>Dashboard</div>
       </div>
 
-      {/* MAIN */}
       <div style={styles.main}>
-
-        <h1>Dashboard</h1>
 
         {/* KPI */}
         <div style={styles.kpis}>
-          <div style={styles.kpiBlue}>
-            {services.length}<br />Total
-          </div>
-          <div style={styles.kpiOrange}>
-            {services.filter(s => s.progress < 40).length}<br />Risco
-          </div>
-          <div style={styles.kpiGreen}>
-            {services.filter(s => s.progress > 80).length}<br />Concluído
-          </div>
+          <div>Total: {services.length}</div>
+          <div>Risco: {services.filter(s => s.progress < 40).length}</div>
+          <div>Done: {services.filter(s => s.status === "done").length}</div>
         </div>
 
         {/* CREATE */}
-        <div style={styles.create}>
-          <input
-            placeholder="Projeto"
-            value={form.name}
-            onChange={e => setForm({ ...form, name: e.target.value })}
-          />
-          <input
-            type="number"
-            placeholder="Progresso"
-            value={form.progress}
-            onChange={e => setForm({ ...form, progress: e.target.value })}
-          />
-          <input
-            placeholder="SLA"
-            value={form.sla}
-            onChange={e => setForm({ ...form, sla: e.target.value })}
-          />
-          <button onClick={createProject}>Criar</button>
-        </div>
+        <input value={name} onChange={e => setName(e.target.value)} placeholder="Novo projeto" />
+        <button onClick={createProject}>Criar</button>
 
-        {/* PROJECT GRID */}
-        <div style={styles.grid}>
-          {services.map(s => (
-            <div key={s.id} style={styles.card}>
+        {/* BOARD */}
+        <DragDropContext onDragEnd={onDragEnd}>
+          <div style={styles.board}>
+            {Object.entries(columns).map(([key, items]) => (
+              <Droppable droppableId={key} key={key}>
+                {provided => (
+                  <div ref={provided.innerRef} {...provided.droppableProps} style={styles.column}>
+                    <h3>{key}</h3>
 
-              {editing === s.id ? (
-                <>
-                  <input
-                    value={s.name}
-                    onChange={e => updateProject(s.id, { name: e.target.value })}
-                  />
-                  <input
-                    type="number"
-                    value={s.progress}
-                    onChange={e => updateProject(s.id, { progress: e.target.value })}
-                  />
-                  <input
-                    value={s.sla || ""}
-                    onChange={e => updateProject(s.id, { sla: e.target.value })}
-                  />
-                  <button onClick={() => setEditing(null)}>Guardar</button>
-                </>
-              ) : (
-                <>
-                  <h3>{s.name}</h3>
-                  <p>{risk(s.progress)}</p>
-                  <p>Progresso: {s.progress}%</p>
-                  <p>SLA: {s.sla}</p>
-                  <button onClick={() => setEditing(s.id)}>Editar</button>
-                </>
-              )}
+                    {items.map((item, i) => (
+                      <Draggable key={item.id} draggableId={item.id} index={i}>
+                        {provided => (
+                          <div
+                            ref={provided.innerRef}
+                            {...provided.draggableProps}
+                            {...provided.dragHandleProps}
+                            style={styles.card}
+                          >
+                            {item.name}
 
-              {/* PROGRESS */}
-              <div style={styles.progress}>
-                <div style={{
-                  width: `${s.progress}%`,
-                  background: "#22c55e",
-                  height: "100%"
-                }} />
-              </div>
+                            <input
+                              placeholder="timeline"
+                              value={timelineInput}
+                              onChange={e => setTimelineInput(e.target.value)}
+                            />
+                            <button onClick={() => addTimeline(item)}>+</button>
 
-              {/* TIMELINE */}
-              <div>
-                <b>Timeline</b>
-                <input
-                  placeholder="Novo evento"
-                  value={timelineInput}
-                  onChange={e => setTimelineInput(e.target.value)}
-                />
-                <button onClick={() => addTimeline(s)}>+</button>
+                            {(item.timeline || []).map((t, i) => (
+                              <div key={i}>• {t}</div>
+                            ))}
+                          </div>
+                        )}
+                      </Draggable>
+                    ))}
 
-                {(s.timeline || []).map((t, i) => (
-                  <div key={i}>• {t}</div>
-                ))}
-              </div>
-
-            </div>
-          ))}
-        </div>
+                    {provided.placeholder}
+                  </div>
+                )}
+              </Droppable>
+            ))}
+          </div>
+        </DragDropContext>
 
         {/* TEAM */}
-        <div style={styles.team}>
-          <h2>Equipa</h2>
-          <input
-            placeholder="Adicionar membro (Enter)"
-            onKeyDown={e => {
-              if (e.key === "Enter") addMember(e.target.value);
-            }}
-          />
+        <input placeholder="Adicionar membro" onKeyDown={e => {
+          if (e.key === "Enter") addMember(e.target.value);
+        }} />
 
-          {team.map(m => (
-            <div key={m.id}>👤 {m.email}</div>
-          ))}
-        </div>
+        {team.map(m => (
+          <div key={m.id}>{m.email}</div>
+        ))}
 
       </div>
     </div>
@@ -222,66 +216,13 @@ function Dashboard() {
 }
 
 const styles = {
-  app: { display: "flex", height: "100vh", fontFamily: "Inter" },
-
-  sidebar: {
-    width: 240,
-    background: "#1e3a8a",
-    color: "white",
-    padding: 20
-  },
-
-  active: { background: "#2563eb", padding: 10, borderRadius: 8 },
-
-  main: { flex: 1, padding: 30, background: "#f1f5f9" },
-
-  kpis: { display: "flex", gap: 20, marginBottom: 20 },
-
-  kpiBlue: { flex: 1, background: "#2563eb", color: "white", padding: 20, borderRadius: 10 },
-  kpiOrange: { flex: 1, background: "#f97316", color: "white", padding: 20, borderRadius: 10 },
-  kpiGreen: { flex: 1, background: "#22c55e", color: "white", padding: 20, borderRadius: 10 },
-
-  create: { display: "flex", gap: 10, marginBottom: 20 },
-
-  grid: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: 20
-  },
-
-  card: {
-    background: "white",
-    padding: 20,
-    borderRadius: 12,
-    boxShadow: "0 4px 10px rgba(0,0,0,0.1)"
-  },
-
-  progress: {
-    height: 6,
-    background: "#ddd",
-    margin: "10px 0"
-  },
-
-  team: {
-    marginTop: 30,
-    background: "white",
-    padding: 20,
-    borderRadius: 10
-  },
-
-  login: {
-    display: "flex",
-    height: "100vh",
-    justifyContent: "center",
-    alignItems: "center"
-  },
-
-  loginBox: {
-    background: "white",
-    padding: 30,
-    borderRadius: 10,
-    display: "flex",
-    flexDirection: "column",
-    gap: 10
-  }
+  app: { display: "flex", height: "100vh" },
+  sidebar: { width: 200, background: "#1e3a8a", color: "white", padding: 20 },
+  main: { flex: 1, padding: 20, background: "#f1f5f9" },
+  kpis: { display: "flex", gap: 10, marginBottom: 20 },
+  board: { display: "flex", gap: 10 },
+  column: { flex: 1, background: "#ddd", padding: 10 },
+  card: { background: "white", padding: 10, marginBottom: 10 },
+  center: { display: "flex", justifyContent: "center", alignItems: "center", height: "100vh" },
+  box: { display: "flex", flexDirection: "column", gap: 10 }
 };
