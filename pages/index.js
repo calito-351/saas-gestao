@@ -36,11 +36,9 @@ export default function Home() {
 function Dashboard({ session }) {
   const [orgId, setOrgId] = useState(null);
   const [services, setServices] = useState([]);
-  const [team, setTeam] = useState([]);
   const [name, setName] = useState("");
-  const [start, setStart] = useState("");
-  const [end, setEnd] = useState("");
-  const [inviteEmail, setInviteEmail] = useState("");
+  const [editing, setEditing] = useState(null);
+  const [timelineText, setTimelineText] = useState("");
 
   useEffect(() => {
     setup();
@@ -72,10 +70,7 @@ function Dashboard({ session }) {
   }
 
   useEffect(() => {
-    if (orgId) {
-      load();
-      loadTeam();
-    }
+    if (orgId) load();
   }, [orgId]);
 
   async function load() {
@@ -87,104 +82,125 @@ function Dashboard({ session }) {
     setServices(data || []);
   }
 
-  async function loadTeam() {
-    const { data } = await supabase
-      .from("team_members")
-      .select("*")
-      .eq("org_id", orgId);
-
-    setTeam(data || []);
-  }
-
   async function addService() {
     await supabase.from("services").insert({
       name,
       org_id: orgId,
       status: "todo",
-      progress: 20,
-      start_date: start,
-      end_date: end
+      progress: 10,
+      timeline: []
     });
 
     setName("");
     load();
   }
 
-  async function invite() {
-    await supabase.from("team_members").insert({
-      email: inviteEmail,
-      org_id: orgId
-    });
-
-    setInviteEmail("");
-    loadTeam();
+  async function updateService(id, updates) {
+    await supabase.from("services").update(updates).eq("id", id);
+    load();
   }
 
-  function daysBetween(a, b) {
-    return (new Date(b) - new Date(a)) / (1000 * 60 * 60 * 24);
+  async function onDrop(e, status) {
+    const id = e.dataTransfer.getData("id");
+    await updateService(id, { status });
+  }
+
+  function onDragStart(e, id) {
+    e.dataTransfer.setData("id", id);
+  }
+
+  function addTimeline(service) {
+    const updated = [...(service.timeline || []), timelineText];
+    updateService(service.id, { timeline: updated });
+    setTimelineText("");
   }
 
   return (
     <div style={styles.app}>
       
-      {/* SIDEBAR */}
       <div style={styles.sidebar}>
         <h2>SaaS PRO</h2>
         <div>Dashboard</div>
-        <div>Equipa</div>
         <div onClick={() => supabase.auth.signOut()} style={{ marginTop: 20 }}>
           Logout
         </div>
       </div>
 
-      {/* MAIN */}
       <div style={styles.main}>
-
         <h1>Dashboard</h1>
 
-        {/* CREATE PROJECT */}
-        <div style={styles.create}>
-          <input placeholder="Projeto" value={name} onChange={e => setName(e.target.value)} />
-          <input type="date" value={start} onChange={e => setStart(e.target.value)} />
-          <input type="date" value={end} onChange={e => setEnd(e.target.value)} />
+        {/* CREATE */}
+        <div style={{ marginBottom: 20 }}>
+          <input value={name} onChange={e => setName(e.target.value)} placeholder="Novo projeto" />
           <button onClick={addService}>Criar</button>
         </div>
 
-        {/* TEAM */}
-        <div style={styles.team}>
-          <h3>Equipa</h3>
-          <input placeholder="Email membro" value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} />
-          <button onClick={invite}>Adicionar</button>
+        {/* KANBAN */}
+        <div style={styles.kanban}>
+          {["todo", "doing", "done"].map(col => (
+            <div
+              key={col}
+              style={styles.column}
+              onDragOver={e => e.preventDefault()}
+              onDrop={e => onDrop(e, col)}
+            >
+              <h3>{col.toUpperCase()}</h3>
 
-          {team.map(m => (
-            <div key={m.id}>{m.email} ({m.role})</div>
-          ))}
-        </div>
+              {services.filter(s => s.status === col).map(s => (
+                <div
+                  key={s.id}
+                  style={styles.card}
+                  draggable
+                  onDragStart={e => onDragStart(e, s.id)}
+                >
 
-        {/* GANTT */}
-        <div style={styles.gantt}>
-          <h3>Timeline</h3>
+                  {/* EDIT */}
+                  {editing === s.id ? (
+                    <>
+                      <input
+                        value={s.name}
+                        onChange={e => updateService(s.id, { name: e.target.value })}
+                      />
+                      <input
+                        type="number"
+                        value={s.progress}
+                        onChange={e => updateService(s.id, { progress: e.target.value })}
+                      />
+                      <button onClick={() => setEditing(null)}>Guardar</button>
+                    </>
+                  ) : (
+                    <>
+                      <b>{s.name}</b>
+                      <p>{s.progress}%</p>
+                      <button onClick={() => setEditing(s.id)}>Editar</button>
+                    </>
+                  )}
 
-          {services.map(s => {
-            const duration = daysBetween(s.start_date, s.end_date) || 1;
+                  {/* PROGRESS */}
+                  <div style={styles.progress}>
+                    <div style={{ width: `${s.progress}%`, background: "green", height: "100%" }} />
+                  </div>
 
-            return (
-              <div key={s.id} style={styles.ganttRow}>
-                <span style={{ width: 150 }}>{s.name}</span>
+                  {/* TIMELINE */}
+                  <div style={{ marginTop: 10 }}>
+                    <input
+                      placeholder="Adicionar evento"
+                      value={timelineText}
+                      onChange={e => setTimelineText(e.target.value)}
+                    />
+                    <button onClick={() => addTimeline(s)}>+</button>
 
-                <div style={styles.ganttBarContainer}>
-                  <div
-                    style={{
-                      width: `${duration * 20}px`,
-                      background: "#2563eb",
-                      height: 20,
-                      borderRadius: 4
-                    }}
-                  />
+                    {(s.timeline || []).map((t, i) => (
+                      <div key={i} style={{ fontSize: 12 }}>
+                        - {t}
+                      </div>
+                    ))}
+                  </div>
+
                 </div>
-              </div>
-            );
-          })}
+              ))}
+            </div>
+          ))}
         </div>
 
       </div>
@@ -194,37 +210,12 @@ function Dashboard({ session }) {
 
 const styles = {
   app: { display: "flex", height: "100vh", fontFamily: "Arial" },
-  sidebar: { width: 220, background: "#1e293b", color: "white", padding: 20 },
-  main: { flex: 1, padding: 20, background: "#f8fafc" },
-
-  create: { display: "flex", gap: 10, marginBottom: 20 },
-
-  team: {
-    background: "white",
-    padding: 15,
-    marginBottom: 20,
-    borderRadius: 10
-  },
-
-  gantt: {
-    background: "white",
-    padding: 15,
-    borderRadius: 10
-  },
-
-  ganttRow: {
-    display: "flex",
-    alignItems: "center",
-    marginBottom: 10
-  },
-
-  ganttBarContainer: {
-    flex: 1,
-    background: "#e5e7eb",
-    height: 20,
-    marginLeft: 10
-  },
-
+  sidebar: { width: 200, background: "#1e293b", color: "white", padding: 20 },
+  main: { flex: 1, padding: 20, background: "#f1f5f9" },
+  kanban: { display: "flex", gap: 10 },
+  column: { flex: 1, background: "#e2e8f0", padding: 10 },
+  card: { background: "white", padding: 10, marginBottom: 10, borderRadius: 8 },
+  progress: { height: 6, background: "#ddd", marginTop: 5 },
   center: { display: "flex", justifyContent: "center", alignItems: "center", height: "100vh" },
   box: { display: "flex", flexDirection: "column", gap: 10 }
 };
