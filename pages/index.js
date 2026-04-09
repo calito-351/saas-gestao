@@ -2,21 +2,38 @@ import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 
 export default function Home() {
-  const [status, setStatus] = useState("A ligar...");
+  const [session, setSession] = useState(null);
 
   useEffect(() => {
-    async function test() {
-      const { data, error } = await supabase.auth.getSession();
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+    });
 
-      if (error) {
-        setStatus("Erro ligação");
-      } else {
-        setStatus("Ligado ao Supabase");
-      }
-    }
-
-    test();
+    supabase.auth.onAuthStateChange((_e, s) => setSession(s));
   }, []);
 
-  return <h1>{status}</h1>;
+  if (!session) {
+    let email = "";
+    let password = "";
+
+    return (
+      <div style={{ padding: 40 }}>
+        <h2>Login</h2>
+        <input onChange={e => (email = e.target.value)} placeholder="email" />
+        <input onChange={e => (password = e.target.value)} type="password" />
+        <button onClick={() => supabase.auth.signInWithPassword({ email, password })}>
+          Entrar
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: 40 }}>
+      <h1>Login feito com sucesso</h1>
+      <button onClick={() => supabase.auth.signOut()}>
+        Logout
+      </button>
+    </div>
+  );
 }
